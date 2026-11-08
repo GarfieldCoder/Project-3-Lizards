@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <semaphore.h>  //LW
 
 #include <iostream>
 #include <thread>
@@ -94,7 +95,8 @@ using namespace std;
 /*
  * Declare global variables here
  */
-
+sem_t driveway;   //LW  counts free spots on the driveway
+mutex countLock;  //LW  protects crossing counters below
 
 /**************************************************/
 /* Please leave these variables alone.  They are  */
@@ -160,7 +162,7 @@ int Cat::getId()
  void Cat::run() 
  {
 	 // launch the thread to simulate the cat's behavior	 
-	 
+	 _catThread = new thread (catThread, this);   //LW
  }
  
  /**
@@ -171,6 +173,7 @@ int Cat::getId()
  void Cat::wait()
  {
 	 // wait for the thread to terminate
+   _catThread->join();    //LW
  }
  
  
@@ -232,11 +235,13 @@ void Cat::catThread (Cat *aCat)
 		/*
 	     * Check for too many lizards crossing
 	     */
+    countLock.lock();   //LW
 		if (numCrossingSago2MonkeyGrass + numCrossingMonkeyGrass2Sago > MAX_LIZARD_CROSSING)
 		{
 		  cout << "\tThe cats are happy - they have toys.\n";
 		  exit( -1 );
 		}
+    countLock.unlock();   //LW
     }
 }
 
@@ -359,7 +364,7 @@ void Lizard::sago2MonkeyGrassIsSafe()
 		cout << flush;
     }
 
-	
+    sem_wait(&driveway);  //LW  block until a driveway spot is free
 
 
 	if (debug)
@@ -388,6 +393,7 @@ void Lizard::crossSago2MonkeyGrass()
 	/*
 	 * One more crossing this way
 	 */
+  countLock.lock();   //LW
 	numCrossingSago2MonkeyGrass++;
 
 	/*
@@ -400,7 +406,8 @@ void Lizard::crossSago2MonkeyGrass()
 		cout << "\t" << numCrossingMonkeyGrass2Sago << " crossing monkey grass -> sago" << endl;
 		exit( -1 );
     }
-
+  
+  countLock.unlock();   //LW
 
 	/*
      * It takes a while to cross, so simulate it
@@ -410,7 +417,9 @@ void Lizard::crossSago2MonkeyGrass()
     /*
      * That one seems to have made it
      */
-    numCrossingSago2MonkeyGrass--;
+  countLock.lock();   //LW
+  numCrossingSago2MonkeyGrass--;
+  countLock.unlock(); //LW
 }
 
 
@@ -430,10 +439,7 @@ void Lizard::madeIt2MonkeyGrass()
 		cout << flush;
     }
 
-
-
-
-
+  sem_post(&driveway);  //LW free up driveway spot for next lizard
 }
 
 
@@ -483,7 +489,7 @@ void Lizard::monkeyGrass2SagoIsSafe()
     }
 
 
-
+    sem_wait(&driveway);  //LW  block until driveway spot is free
 
 
 	if (debug)
@@ -512,8 +518,9 @@ void Lizard::crossMonkeyGrass2Sago()
     /*
      * One more crossing this way
      */
+  countLock.lock();   //LW
 	numCrossingMonkeyGrass2Sago++;
-
+  
   
     /*
      * Check for lizards cross both ways
@@ -526,6 +533,8 @@ void Lizard::crossMonkeyGrass2Sago()
 		exit( -1 );
     }
 
+  countLock.unlock();   //LW
+
 	/*
      * It takes a while to cross, so simulate it
      */
@@ -534,7 +543,9 @@ void Lizard::crossMonkeyGrass2Sago()
 	/*
      * That one seems to have made it
      */
+  countLock.lock();   //LW
 	numCrossingMonkeyGrass2Sago--;
+  countLock.unlock();   //LW
 }
 
 
@@ -554,6 +565,8 @@ void Lizard::madeIt2Sago()
 		cout << "[" << _id << "] made the  monkey grass -> sago  crossing" << endl;
 		cout << flush;
     }
+
+  sem_post(&driveway);  //LW free up driveway spot for next lizard
 }
 
 /**
@@ -584,24 +597,14 @@ void Lizard::lizardThread(Lizard *aLizard)
        * some functions by filling in the code.  Some  
        * are already completed - see the comments.
        */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+      aLizard->sleepNow();                //LW
+      aLizard->sago2MonkeyGrassIsSafe();  //LW
+      aLizard->crossSago2MonkeyGrass();   //LW
+      aLizard->madeIt2MonkeyGrass();      //LW
+      aLizard->eat();                     //LW
+      aLizard->monkeyGrass2SagoIsSafe();  //LW
+      aLizard->crossMonkeyGrass2Sago();   //LW
+      aLizard->madeIt2Sago();             //LW
     }
 
 }
@@ -652,7 +655,7 @@ int main(int argc, char **argv)
 	/*
      * Initialize locks and/or semaphores
      */
-
+  sem_init(&driveway, 0, MAX_LIZARD_CROSSING);  //LW
 
 
 
@@ -668,7 +671,10 @@ int main(int argc, char **argv)
     /*
      * Create NUM_CATS cat threads
      */
-	 
+    vector<Cat*> allCats;               //LW
+    for (int i=0; i < NUM_CATS; i++) {  //LW
+	    allCats.push_back(new Cat(i));    //LW
+    }                                   //LW
 
 	/*
 	 * Run NUM_LIZARDS and NUM_CATS threads
@@ -676,6 +682,9 @@ int main(int argc, char **argv)
     for (int i=0; i < NUM_LIZARDS; i++) {
         allLizards[i]->run();
     }
+    for (int i=0; i < NUM_CATS; i++) {  //LW
+        allCats[i]->run();              //LW
+    }                                   //LW
 
 	/*
      * Now let the world run for a while
@@ -692,28 +701,35 @@ int main(int argc, char **argv)
     /*
      * Wait until all threads terminate
      */
-
-
-
-
+    for (int i=0; i < NUM_LIZARDS; i++) {   //LW
+        allLizards[i]->wait();              //LW
+    }                                       //LW
+    for (int i=0; i < NUM_CATS; i++) {      //LW
+        allCats[i]->wait();                 //LW
+    }                                       //LW
 
 
 	/*
-     * Delete the locks and semaphores
-     */
-	 
+   * Delete the locks and semaphores
+   */
+	sem_destroy(&driveway);
 	 
 	 
 	/*
 	 * Delete all cat and lizard objects
 	 */
- 
+  for (int i=0; i < NUM_LIZARDS; i++) {   //LW
+      delete allLizards[i];               //LW
+  }                                       //LW
+  for (int i=0; i < NUM_CATS; i++) {      //LW
+      delete allCats[i];                  //LW
+  }                                       //LW
 
 
 
 	/*
-     * Exit happily
-     */
+   * Exit happily
+   */
 	return 0;
 }
 
