@@ -25,6 +25,8 @@
 #include <thread>
 #include <mutex>
 #include <vector>
+#include <semaphore.h> // NG
+#include <cerrno> // NG
 
 
 using namespace std;
@@ -54,6 +56,9 @@ using namespace std;
  * Try 30 for development and 120 for more thorough testing.
  */
 #define WORLDEND             30
+// NG: Keep the 30-second setting for quick tests. Give the submitted run 180 seconds.
+#undef WORLDEND
+#define WORLDEND 180
 
 /*
  * Number of lizard threads to create
@@ -107,6 +112,31 @@ int numCrossingMonkeyGrass2Sago;
 int debug;
 int running;
 /**************************************************/
+// NG: One ticket per open driveway spot. Both directions share the pool.
+sem_t drivewaySlots; // NG
+mutex crossingMutex; // NG
+mutex runningMutex; // NG: Protect the flag that tells the cats and lizards to stop.
+
+static bool worldRunning()
+{
+    runningMutex.lock();
+    const bool stillRunning = running != 0;
+    runningMutex.unlock();
+    return stillRunning;
+} // NG
+
+
+// NG: Keep waiting for a ticket if a signal interrupts the wait.
+void takeDrivewaySlot() { // NG
+    int result; // NG
+    do { // NG
+        result = sem_wait(&drivewaySlots); // NG
+    } while (result == -1 && errno == EINTR); // NG
+    if (result == -1) { // NG
+        perror("sem_wait"); // NG
+        exit(1); // NG
+    } // NG
+} // NG
 
 
 
@@ -121,6 +151,7 @@ class Cat {
 	
 	public:
 		Cat (int id);
+        ~Cat() { delete _catThread; } // NG: Free the cat thread after it finishes.
 		int getId();
 		void run();
 		void wait();
@@ -139,6 +170,7 @@ class Cat {
 Cat::Cat (int id)
 {
 	_id = id;
+    _catThread = nullptr; // NG
 }
 
 /**
@@ -160,6 +192,7 @@ int Cat::getId()
  void Cat::run() 
  {
 	 // launch the thread to simulate the cat's behavior	 
+    _catThread = new thread(catThread, this); // NG
 	 
  }
  
@@ -171,6 +204,7 @@ int Cat::getId()
  void Cat::wait()
  {
 	 // wait for the thread to terminate
+    if (_catThread != nullptr) _catThread->join(); // NG
  }
  
  
@@ -223,7 +257,7 @@ void Cat::catThread (Cat *aCat)
 		cout << flush;
     }
 
-	while(running)
+	while (worldRunning())
     {
 		aCat->sleepNow();
 
@@ -232,6 +266,7 @@ void Cat::catThread (Cat *aCat)
 		/*
 	     * Check for too many lizards crossing
 	     */
+        lock_guard<mutex> lock(crossingMutex); // NG: One cat peek sees both crossing counts together.
 		if (numCrossingSago2MonkeyGrass + numCrossingMonkeyGrass2Sago > MAX_LIZARD_CROSSING)
 		{
 		  cout << "\tThe cats are happy - they have toys.\n";
@@ -248,6 +283,7 @@ class Lizard {
 
 	public:
 		Lizard(int id);
+        ~Lizard() { delete _aLizard; } // NG: Free the lizard thread after it finishes.
 		int getId();
         void run();
         void wait();
@@ -358,6 +394,7 @@ void Lizard::sago2MonkeyGrassIsSafe()
 		cout << "[" << _id << "] checking  sago -> monkey grass" << endl;
 		cout << flush;
     }
+    takeDrivewaySlot(); // NG: Wait for a driveway ticket.
 
 	
 
@@ -388,7 +425,10 @@ void Lizard::crossSago2MonkeyGrass()
 	/*
 	 * One more crossing this way
 	 */
+    { // NG
+        lock_guard<mutex> lock(crossingMutex); // NG
 	numCrossingSago2MonkeyGrass++;
+    if (debug) printf("Lizards crossing: %d\n", numCrossingSago2MonkeyGrass + numCrossingMonkeyGrass2Sago); // NG
 
 	/*
      * Check for lizards cross both ways
@@ -400,6 +440,7 @@ void Lizard::crossSago2MonkeyGrass()
 		cout << "\t" << numCrossingMonkeyGrass2Sago << " crossing monkey grass -> sago" << endl;
 		exit( -1 );
     }
+    } // NG: Unlock while the lizard crosses. It keeps its ticket.
 
 
 	/*
@@ -410,7 +451,10 @@ void Lizard::crossSago2MonkeyGrass()
     /*
      * That one seems to have made it
      */
+    { // NG
+        lock_guard<mutex> lock(crossingMutex); // NG
     numCrossingSago2MonkeyGrass--;
+    } // NG
 }
 
 
@@ -429,6 +473,7 @@ void Lizard::madeIt2MonkeyGrass()
 		cout << "[" << _id << "] made the  sago -> monkey grass  crossing" << endl;
 		cout << flush;
     }
+    sem_post(&drivewaySlots); // NG: Return the ticket so another lizard can cross.
 
 
 
@@ -485,6 +530,7 @@ void Lizard::monkeyGrass2SagoIsSafe()
 
 
 
+    takeDrivewaySlot(); // NG: Wait for a driveway ticket.
 
 	if (debug)
     {
@@ -512,7 +558,10 @@ void Lizard::crossMonkeyGrass2Sago()
     /*
      * One more crossing this way
      */
+    { // NG
+        lock_guard<mutex> lock(crossingMutex); // NG
 	numCrossingMonkeyGrass2Sago++;
+    if (debug) printf("Lizards crossing: %d\n", numCrossingSago2MonkeyGrass + numCrossingMonkeyGrass2Sago); // NG
 
   
     /*
@@ -525,6 +574,7 @@ void Lizard::crossMonkeyGrass2Sago()
 		cout << "\t " << numCrossingMonkeyGrass2Sago << " crossing monkey grass -> sago" << endl;
 		exit( -1 );
     }
+    } // NG: Unlock while the lizard crosses. It keeps its ticket.
 
 	/*
      * It takes a while to cross, so simulate it
@@ -534,7 +584,10 @@ void Lizard::crossMonkeyGrass2Sago()
 	/*
      * That one seems to have made it
      */
+    { // NG
+        lock_guard<mutex> lock(crossingMutex); // NG
 	numCrossingMonkeyGrass2Sago--;
+    } // NG
 }
 
 
@@ -554,6 +607,7 @@ void Lizard::madeIt2Sago()
 		cout << "[" << _id << "] made the  monkey grass -> sago  crossing" << endl;
 		cout << flush;
     }
+    sem_post(&drivewaySlots); // NG: Return the ticket so another lizard can cross.
 }
 
 /**
@@ -575,7 +629,7 @@ void Lizard::lizardThread(Lizard *aLizard)
       cout << flush;
     }
 
-	while(running)
+	while (worldRunning())
     {
       /* 
        * Follow the algorithm given in the assignment
@@ -584,6 +638,29 @@ void Lizard::lizardThread(Lizard *aLizard)
        * some functions by filling in the code.  Some  
        * are already completed - see the comments.
        */
+        // NG: One lizard round trip. Nap, cross for a snack, then head home.
+        aLizard->sleepNow();
+        if (!worldRunning()) break; // Time up? Skip the trip.
+
+        aLizard->sago2MonkeyGrassIsSafe(); // Wait for a ticket to the monkey grass.
+        if (!worldRunning()) {
+            sem_post(&drivewaySlots); // Time up? Return the ticket and stop.
+            break;
+        }
+        aLizard->crossSago2MonkeyGrass();
+        aLizard->madeIt2MonkeyGrass(); // Made it to the monkey grass. Return the ticket.
+
+        if (!worldRunning()) break; // Time up? Skip the snack.
+        aLizard->eat();
+        if (!worldRunning()) break; // Time up? Skip the trip home.
+
+        aLizard->monkeyGrass2SagoIsSafe(); // Wait for a ticket to the sago palm.
+        if (!worldRunning()) {
+            sem_post(&drivewaySlots); // Time up? Return the ticket and stop.
+            break;
+        }
+        aLizard->crossMonkeyGrass2Sago();
+        aLizard->madeIt2Sago(); // Made it to the sago palm. Return the ticket. // NG
 
 
 
@@ -652,6 +729,7 @@ int main(int argc, char **argv)
 	/*
      * Initialize locks and/or semaphores
      */
+    sem_init(&drivewaySlots, 0, MAX_LIZARD_CROSSING); // NG: Start with one ticket per spot.
 
 
 
@@ -669,6 +747,10 @@ int main(int argc, char **argv)
      * Create NUM_CATS cat threads
      */
 	 
+    vector<Cat*> allCats; // NG
+    for (int i = 0; i < NUM_CATS; i++) { // NG
+        allCats.push_back(new Cat(i)); // NG
+    } // NG
 
 	/*
 	 * Run NUM_LIZARDS and NUM_CATS threads
@@ -676,6 +758,7 @@ int main(int argc, char **argv)
     for (int i=0; i < NUM_LIZARDS; i++) {
         allLizards[i]->run();
     }
+    for (Cat* cat : allCats) cat->run(); // NG
 
 	/*
      * Now let the world run for a while
@@ -686,12 +769,18 @@ int main(int argc, char **argv)
 	/*
      * That's it - the end of the world
      */
-	running = 0;
+    // NG: Tell the cats and lizards to call it a day. Unlock before joining.
+    runningMutex.lock();
+    running = 0;
+    runningMutex.unlock();
+    // NG: Lizards return tickets after crossing or if time is up when they get one.
 
 
     /*
      * Wait until all threads terminate
      */
+    for (Lizard* lizard : allLizards) lizard->wait(); // NG
+    for (Cat* cat : allCats) cat->wait(); // NG
 
 
 
@@ -701,12 +790,15 @@ int main(int argc, char **argv)
 	/*
      * Delete the locks and semaphores
      */
+    sem_destroy(&drivewaySlots); // NG
 	 
 	 
 	 
 	/*
 	 * Delete all cat and lizard objects
 	 */
+    for (Lizard* lizard : allLizards) delete lizard; // NG
+    for (Cat* cat : allCats) delete cat; // NG
  
 
 
