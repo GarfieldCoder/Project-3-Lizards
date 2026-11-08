@@ -4,8 +4,8 @@ LDFLAGS  = -pthread
  
 all: lizards
  
-lizards: lizard.cpp
-	$(CXX) $(CXXFLAGS) lizard.cpp -o lizards $(LDFLAGS)
+lizards: lizards.cpp
+	$(CXX) $(CXXFLAGS) lizards.cpp -o lizards $(LDFLAGS)
  
 clean:
 	rm -f lizards
